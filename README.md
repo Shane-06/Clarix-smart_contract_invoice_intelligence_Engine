@@ -263,7 +263,7 @@ AI temperature is kept low for more consistent structured outputs.
 
 ### AI
 
-* OpenAI API
+* Gemini API
 * Structured JSON responses
 
 ### Authentication
@@ -448,7 +448,7 @@ Make sure you have:
 
 You will also need accounts/API credentials for:
 
-* OpenAI
+* GeminiAI
 * Cloudinary
 * Resend
 
@@ -592,7 +592,7 @@ The PRD specifies the following deployment architecture:
 | PostgreSQL   | Neon             |
 | File Storage | Cloudinary       |
 | Email        | Resend           |
-| AI           | OpenAI API       |
+| AI           | Gemini API       |
 
 ---
 
