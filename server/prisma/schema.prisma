@@ -1,0 +1,96 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String         @id @default(uuid())
+  name          String
+  email         String         @unique
+  passwordHash  String
+  role          String         @default("user") // "user" or "admin"
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  contracts     Contract[]
+  notifications Notification[]
+}
+
+model Contract {
+  id         String      @id @default(uuid())
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String
+  fileUrl    String?
+  rawText    String?     @db.Text
+  summary    String?     @db.Text
+  riskScore  Int?
+  status     String      @default("DRAFT") // DRAFT, ANALYZED, ACTIVE, COMPLETED
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  milestones Milestone[]
+  invoices   Invoice[]
+  workLogs   WorkLog[]
+}
+
+model Milestone {
+  id         String    @id @default(uuid())
+  contractId String
+  contract   Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  title      String
+  dueDate    DateTime
+  status     String    @default("PENDING") // PENDING, COMPLETED
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  invoices   Invoice[]
+}
+
+model Invoice {
+  id          String     @id @default(uuid())
+  contractId  String
+  contract    Contract   @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  milestoneId String?
+  milestone   Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  amount      Float
+  dueDate     DateTime
+  status      String     @default("UNPAID") // UNPAID, PAID, OVERDUE
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  payments    Payment[]
+}
+
+model Payment {
+  id        String   @id @default(uuid())
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount    Float
+  date      DateTime @default(now())
+  method    String   // bank_transfer, card, cash, paypal, crypto
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // email_reminder, milestone_due, invoice_paid, risk_alert
+  message   String
+  status    String   @default("UNREAD") // UNREAD, READ
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model WorkLog {
+  id          String   @id @default(uuid())
+  contractId  String
+  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  description String
+  hours       Float
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
