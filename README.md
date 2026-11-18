@@ -34,13 +34,13 @@ Contract Upload
       ↓
 File Validation
       ↓
-Cloudinary Storage
-      ↓
 PDF/DOCX Text Extraction
       ↓
 AI Contract Analysis
       ↓
 Structured JSON Validation
+      ↓
+Private Cloudinary Storage
       ↓
 PostgreSQL Storage
       ↓
@@ -63,12 +63,12 @@ Instead of manually reading a contract and entering important information, the s
 * JWT-based authentication
 * Password hashing using bcrypt
 * Protected API routes
-* Role-based access control
+* Ownership checks for contracts, milestones, invoices, and notifications
 
 ### 📄 Contract Management
 
 * Upload PDF and DOCX contracts
-* Cloudinary-based document storage
+* Private Cloudinary storage and downloads authorized by contract ownership
 * Automatic text extraction
 * Contract information extraction using AI
 * Contract summaries
@@ -226,7 +226,7 @@ AI temperature is kept low for more consistent structured outputs.
              │                 │                 │
              ▼                 ▼                 ▼
        ┌───────────┐     ┌────────────┐    ┌───────────┐
-       │ PostgreSQL│     │  OpenAI    │    │Cloudinary │
+       │ PostgreSQL│     │  Gemini    │    │Cloudinary │
        │ + Prisma  │     │    API     │    │  Storage  │
        └───────────┘     └────────────┘    └───────────┘
                                │
@@ -247,7 +247,6 @@ AI temperature is kept low for more consistent structured outputs.
 * React
 * TypeScript
 * Tailwind CSS
-* shadcn/ui
 
 ### Backend
 
@@ -263,7 +262,7 @@ AI temperature is kept low for more consistent structured outputs.
 
 ### AI
 
-* OpenAI API
+* Gemini API
 * Structured JSON responses
 
 ### Authentication
@@ -286,7 +285,7 @@ AI temperature is kept low for more consistent structured outputs.
 * Zod
 * JWT authentication
 * Protected routes
-* RBAC
+* Per-user data access
 * Input validation
 * Rate limiting
 * Environment variables
@@ -334,11 +333,14 @@ The database uses foreign-key relationships, timestamps, and Prisma migrations.
 
 ## 🔌 API Endpoints
 
+All routes below use the `/api` prefix.
+
 ### Authentication
 
 ```text
 POST /auth/register
 POST /auth/login
+GET  /auth/me
 ```
 
 ### Contracts
@@ -347,8 +349,12 @@ POST /auth/login
 POST /contracts/upload
 GET  /contracts
 GET  /contracts/:id
+GET  /contracts/:id/download
+PATCH /contracts/:id/contact
 POST /contracts/:id/analyze
 POST /contracts/:id/chat
+GET  /contracts/:id/creep
+POST /contracts/:id/worklog
 ```
 
 ### Milestones
@@ -356,6 +362,8 @@ POST /contracts/:id/chat
 ```text
 GET  /milestones
 POST /milestones
+PATCH /milestones/:id
+DELETE /milestones/:id
 ```
 
 ### Invoices
@@ -364,12 +372,16 @@ POST /milestones
 GET   /invoices
 POST  /invoices
 PATCH /invoices/:id
+POST  /invoices/payment
+DELETE /invoices/:id
 ```
 
 ### Email
 
 ```text
 POST /emails/reminder
+GET  /emails/notifications
+PATCH /emails/notifications/:id
 ```
 
 ---
@@ -405,7 +417,7 @@ Smart_Contract_invoice_Intelligence_Engine/
 
 ## ⚙️ Environment Variables
 
-Create a `.env` file inside the `server` directory.
+Copy `server/.env.example` to `server/.env` and set `DATABASE_URL` to your PostgreSQL database. Generate a unique `JWT_SECRET` of at least 32 characters.
 
 ```env
 DATABASE_URL=
@@ -414,8 +426,10 @@ JWT_SECRET=
 JWT_EXPIRES_IN=7d
 BCRYPT_SALT_ROUNDS=10
 
-OPENAI_API_KEY=
-OPENAI_MODEL=
+DEMO_MODE=true
+
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
 
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
@@ -446,9 +460,9 @@ Make sure you have:
 * PostgreSQL or Docker
 * Git
 
-You will also need accounts/API credentials for:
+For live integrations, you will also need accounts/API credentials for:
 
-* OpenAI
+* Gemini
 * Cloudinary
 * Resend
 
@@ -533,6 +547,14 @@ The frontend should then be available at:
 http://localhost:3000
 ```
 
+The frontend defaults to `http://localhost:5000/api`. Set `NEXT_PUBLIC_API_URL` in `client/.env.local` before building when the backend is hosted elsewhere. Set `CLIENT_URL` on the backend to the deployed frontend origin.
+
+Set `DEMO_MODE=true` on the backend to run locally without provider credentials. Demo mode labels sample analysis, stores test documents in `.demo-files`, and simulates email delivery. Set `DEMO_MODE=false` and supply Gemini, Cloudinary, and Resend credentials for live integrations. Production always uses live mode.
+
+### Verification
+
+From `client`, run `npm run lint` and `npm run build`. From `server`, run `npm run build`, then run `npm run test:integration` with `TEST_DATABASE_URL` pointing to a migrated, disposable local PostgreSQL database. The integration suite starts its own API server and exercises document upload, downloads, billing, and simulated reminders.
+
 ---
 
 ## 🔄 Contract Processing Pipeline
@@ -544,17 +566,17 @@ When a user uploads a contract:
         ↓
 2. Backend validates the file
         ↓
-3. File uploaded to Cloudinary
+3. Text extracted from document
         ↓
-4. Text extracted from document
+4. Extracted text sent to Gemini
         ↓
-5. Extracted text sent to OpenAI
+5. AI returns structured JSON
         ↓
-6. AI returns structured JSON
+6. JSON response validated
         ↓
-7. JSON response validated
+7. Document saved to authenticated Cloudinary storage
         ↓
-8. Valid information stored in PostgreSQL
+8. Valid information saved to PostgreSQL
         ↓
 9. Dashboard displays extracted information
 ```
@@ -570,10 +592,10 @@ The application is designed with several security mechanisms:
 * Password hashing with bcrypt
 * JWT authentication
 * Protected routes
-* Role-based access control
+* Ownership checks for protected records
 * Request validation with Zod
 * File validation
-* Rate limiting
+* Per-process rate limits on authentication, AI requests, and reminders
 * Input sanitization
 * Environment-based secrets
 * HTTPS in production
@@ -592,7 +614,9 @@ The PRD specifies the following deployment architecture:
 | PostgreSQL   | Neon             |
 | File Storage | Cloudinary       |
 | Email        | Resend           |
-| AI           | OpenAI API       |
+| AI           | Gemini API       |
+
+Run `npx prisma migrate deploy` against the intended database before starting the updated API. The payment migration stores invoice and payment amounts to two decimal places. Legacy Cloudinary uploads retain their original access settings. Move legacy public assets to authenticated storage if they contain private documents.
 
 ---
 

@@ -3,6 +3,8 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from '../utils/prisma';
 import { registerSchema, loginSchema } from '../validators';
+import { getJwtSecret } from '../utils/config';
+import { Prisma } from '@prisma/client';
 
 export async function register(req: Request, res: Response) {
   try {
@@ -14,7 +16,7 @@ export async function register(req: Request, res: Response) {
     });
     
     if (existingUser) {
-      return res.status(400).json({ error: 'User with this email already exists' });
+      return res.status(409).json({ error: 'User with this email already exists' });
     }
     
     const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || '10');
@@ -25,11 +27,10 @@ export async function register(req: Request, res: Response) {
         name: validatedData.name,
         email: validatedData.email,
         passwordHash,
-        role: validatedData.role || 'user',
       }
     });
     
-    const secret = process.env.JWT_SECRET || 'super-secret-key-change-in-production';
+    const secret = getJwtSecret();
     const expires = process.env.JWT_EXPIRES_IN || '7d';
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
@@ -48,6 +49,9 @@ export async function register(req: Request, res: Response) {
       }
     });
   } catch (error: any) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return res.status(409).json({ error: 'User with this email already exists' });
+    }
     if (error.name === 'ZodError') {
       return res.status(400).json({ error: error.errors });
     }
@@ -74,7 +78,7 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
     
-    const secret = process.env.JWT_SECRET || 'super-secret-key-change-in-production';
+    const secret = getJwtSecret();
     const expires = process.env.JWT_EXPIRES_IN || '7d';
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },

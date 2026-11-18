@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma';
-import { milestoneSchema } from '../validators';
+import { milestoneSchema, milestoneUpdateSchema } from '../validators';
+import { ZodError } from 'zod';
 
 export async function getMilestones(req: Request, res: Response) {
   try {
@@ -83,7 +84,7 @@ export async function updateMilestone(req: Request, res: Response) {
     }
 
     const { id } = req.params;
-    const { title, dueDate, status } = req.body;
+    const data = milestoneUpdateSchema.parse(req.body);
 
     const milestone = await prisma.milestone.findUnique({
       where: { id },
@@ -94,14 +95,9 @@ export async function updateMilestone(req: Request, res: Response) {
       return res.status(404).json({ error: 'Milestone not found' });
     }
 
-    const updateData: any = {};
-    if (title !== undefined) updateData.title = title;
-    if (dueDate !== undefined) updateData.dueDate = new Date(dueDate);
-    if (status !== undefined) updateData.status = status;
-
     const updatedMilestone = await prisma.milestone.update({
       where: { id },
-      data: updateData,
+      data,
     });
 
     return res.json({
@@ -109,6 +105,7 @@ export async function updateMilestone(req: Request, res: Response) {
       milestone: updatedMilestone,
     });
   } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ error: error.issues });
     console.error('Update milestone error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }

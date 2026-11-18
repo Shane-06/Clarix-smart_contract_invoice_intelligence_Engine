@@ -7,26 +7,33 @@ import contractRoutes from './routes/contractRoutes';
 import milestoneRoutes from './routes/milestoneRoutes';
 import invoiceRoutes from './routes/invoiceRoutes';
 import emailRoutes from './routes/emailRoutes';
+import { demoMode } from './utils/config';
+import prisma from './utils/prisma';
 
 dotenv.config();
 
 const app = express();
+app.disable('x-powered-by');
+
+const trustedProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 0);
+if (Number.isInteger(trustedProxyHops) && trustedProxyHops > 0) app.set('trust proxy', trustedProxyHops);
 
 // Middleware
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:3000',
-  credentials: true
+  exposedHeaders: ['Content-Disposition'],
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Status Route
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV || 'development'
-  });
+app.get('/api/health', async (req: Request, res: Response) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'healthy', env: process.env.NODE_ENV || 'development', demo: demoMode });
+  } catch {
+    res.status(503).json({ status: 'unavailable', error: 'Database is unavailable' });
+  }
 });
 
 // Routes
@@ -62,7 +69,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
   const statusCode = err.status || err.statusCode || 500;
   return res.status(statusCode).json({
-    error: err.message || 'An unexpected error occurred on the server.'
+    error: statusCode >= 500 ? 'An unexpected error occurred on the server.' : err.message
   });
 });
 

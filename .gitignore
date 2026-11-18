@@ -7,6 +7,8 @@ node_modules/
 !.env.example
 
 # Build output
+.local-run/
+.demo-files/
 .next/
 out/
 dist/

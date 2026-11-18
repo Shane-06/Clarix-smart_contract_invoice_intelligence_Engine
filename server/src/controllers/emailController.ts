@@ -1,142 +1,90 @@
 import { Request, Response } from 'express';
+import { z, ZodError } from 'zod';
 import prisma from '../utils/prisma';
-import { generatePaymentReminder } from '../services/aiService';
-import { sendEmail } from '../services/emailService';
+import { invoiceBalance } from '../utils/invoiceAmounts';
+import { AIUnavailableError, generatePaymentReminder } from '../services/aiService';
+import { EmailUnavailableError, sendEmail } from '../services/emailService';
+import { demoMode } from '../utils/config';
+
+const requestSchema = z.object({
+  invoiceId: z.string().uuid(),
+  delivery: z.object({
+    recipient: z.string().email(),
+    subject: z.string().trim().min(1).max(200),
+    body: z.string().trim().min(1).max(10000),
+  }).optional(),
+});
 
 export async function sendInvoiceReminder(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { invoiceId } = req.body;
-    if (!invoiceId) {
-      return res.status(400).json({ error: 'invoiceId is required.' });
-    }
-
-    // Fetch invoice details with related contract
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: invoiceId },
-      include: {
-        contract: {
-          include: {
-            user: {
-              select: { name: true, email: true }
-            }
-          }
-        },
-        milestone: true,
-      }
+    const { invoiceId, delivery } = requestSchema.parse(req.body);
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: invoiceId, contract: { userId: req.user.userId } },
+      include: { contract: { include: { user: { select: { name: true } } } }, milestone: true, payments: true },
     });
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found.' });
+    const { balance } = invoiceBalance(invoice);
+    if (balance.isZero()) return res.status(400).json({ error: 'This invoice has no outstanding balance.' });
 
-    if (!invoice || invoice.contract.userId !== req.user.userId) {
-      return res.status(404).json({ error: 'Invoice not found.' });
+    const recipient = invoice.contract.clientEmail;
+    if (!delivery) {
+      const analysis = z.object({ clientName: z.string() }).safeParse(invoice.contract.analysis);
+      const clientName = analysis.success && !invoice.contract.isDemo ? analysis.data.clientName : '';
+      const draft = await generatePaymentReminder(
+        balance.toNumber(),
+        invoice.dueDate.toISOString().slice(0, 10),
+        invoice.milestone?.title || invoice.contract.title,
+        clientName || 'there',
+        invoice.contract.user.name,
+      );
+      return res.json({ ...draft, recipient, sent: false, demo: demoMode });
     }
 
-    // Try to determine client name from contract summary/title, or default to Client
-    // In a real application, you might have a Client table or record clientName on the Contract model.
-    // For this engine, we can parse the clientName if extracted, or fallback.
-    // Let's attempt to use "Acme Corp" or extract it.
-    let clientName = 'Client';
-    if (invoice.contract.title) {
-      // Look for indicators in title like "Contract with Acme Corp"
-      const match = invoice.contract.title.match(/(?:with|for)\s+([A-Za-z0-9\s]+)$/i);
-      if (match) {
-        clientName = match[1].trim();
-      }
+    if (!recipient || recipient !== delivery.recipient) {
+      return res.status(409).json({ error: 'The contract contact changed or is missing. Update it and refresh the draft.' });
     }
-
-    const freelancerName = invoice.contract.user.name || 'Freelancer';
-    const milestoneTitle = invoice.milestone ? invoice.milestone.title : 'Project milestone';
-
-    console.log(`[Email Reminder] Generating reminder content for: Invoice ${invoice.id}, Milestone: ${milestoneTitle}`);
-    
-    // Generate reminder via AI
-    const emailContent = await generatePaymentReminder(
-      invoice.amount,
-      invoice.dueDate.toISOString().split('T')[0],
-      milestoneTitle,
-      clientName,
-      freelancerName
-    );
-
-    // Dispatch email
-    const recipientEmail = invoice.contract.user.email; // Send to freelancer as proof/Cc, or client if we had their email
-    // For safety in this interview demo application, we send to the freelancer's email (as a test notification)
-    console.log(`[Email Reminder] Sending email to freelancer: ${recipientEmail}`);
-    const emailResult = await sendEmail({
-      to: recipientEmail,
-      subject: emailContent.subject,
-      html: emailContent.body
-    });
-
-    // Save notification log in database
+    const result = await sendEmail({ to: recipient, subject: delivery.subject, text: delivery.body });
+    // Delivery has already completed. A notification failure must never prompt an email retry.
     await prisma.notification.create({
       data: {
         userId: req.user.userId,
         type: 'email_reminder',
-        message: `Sent payment reminder for invoice ${invoice.id.substring(0, 8)}... ($${invoice.amount.toFixed(2)}) to ${clientName}.`,
-        status: 'UNREAD'
-      }
-    });
-
-    return res.json({
-      message: 'Reminder email processed successfully',
-      sent: true,
-      recipient: recipientEmail,
-      subject: emailContent.subject,
-      body: emailContent.body,
-      resendResult: emailResult
-    });
+        message: result.sent
+          ? 'Payment reminder sent to ' + recipient + ' for ' + invoice.contract.title + '.'
+          : 'Demo reminder recorded for ' + invoice.contract.title + '. No email was sent.',
+      },
+    }).catch(() => console.error('Could not record reminder notification'));
+    return res.json({ ...result, recipient, demo: demoMode });
   } catch (error) {
-    console.error('Invoice reminder email handler error:', error);
-    return res.status(500).json({ error: 'Failed to process and send payment reminder email.' });
+    if (error instanceof ZodError) return res.status(400).json({ error: error.issues });
+    if (error instanceof AIUnavailableError || error instanceof EmailUnavailableError) return res.status(503).json({ error: error.message });
+    console.error('Invoice reminder failed:', error instanceof Error ? error.name : 'Unknown error');
+    return res.status(500).json({ error: 'Failed to process the reminder.' });
   }
 }
 
 export async function getNotifications(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
     const notifications = await prisma.notification.findMany({
-      where: { userId: req.user.userId },
-      orderBy: { createdAt: 'desc' },
-      take: 20
+      where: { userId: req.user.userId }, orderBy: { createdAt: 'desc' }, take: 20,
     });
-
     return res.json(notifications);
-  } catch (error) {
-    console.error('Get notifications error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+  } catch {
+    return res.status(500).json({ error: 'Failed to load notifications.' });
   }
 }
 
 export async function markNotificationRead(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { id } = req.params;
-
-    const notification = await prisma.notification.findUnique({
-      where: { id }
+    const notification = await prisma.notification.updateMany({
+      where: { id: req.params.id, userId: req.user.userId }, data: { status: 'READ' },
     });
-
-    if (!notification || notification.userId !== req.user.userId) {
-      return res.status(404).json({ error: 'Notification not found' });
-    }
-
-    const updated = await prisma.notification.update({
-      where: { id },
-      data: { status: 'READ' }
-    });
-
-    return res.json(updated);
-  } catch (error) {
-    console.error('Mark notification read error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    if (!notification.count) return res.status(404).json({ error: 'Notification not found' });
+    return res.json({ id: req.params.id, status: 'READ' });
+  } catch {
+    return res.status(500).json({ error: 'Failed to update the notification.' });
   }
 }

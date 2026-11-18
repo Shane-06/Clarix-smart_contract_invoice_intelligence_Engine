@@ -1,220 +1,151 @@
+import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
+import { ZodError } from 'zod';
 import prisma from '../utils/prisma';
-import { invoiceSchema, paymentSchema } from '../validators';
+import { invoiceBalance, presentInvoice } from '../utils/invoiceAmounts';
+import { invoiceSchema, invoiceUpdateSchema, paymentSchema } from '../validators';
+
+const invoiceDetails = {
+  contract: { select: { title: true } },
+  milestone: { select: { title: true } },
+  payments: true,
+} satisfies Prisma.InvoiceInclude;
+
+class InvoiceError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
+function invoiceError(res: Response, error: unknown) {
+  if (error instanceof InvoiceError) return res.status(error.status).json({ error: error.message });
+  if (error instanceof ZodError) return res.status(400).json({ error: error.issues });
+  console.error('Invoice operation failed:', error instanceof Error ? error.name : 'Unknown error');
+  return res.status(500).json({ error: 'Invoice operation failed' });
+}
+
+async function checkMilestone(db: Prisma.TransactionClient, milestoneId: string | null | undefined, contractId: string) {
+  if (!milestoneId) return;
+  const milestone = await db.milestone.findFirst({ where: { id: milestoneId, contractId }, select: { id: true } });
+  if (!milestone) throw new InvoiceError(400, 'Milestone must belong to the selected contract.');
+}
+
+async function invoiceTransaction<T>(operation: (db: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await prisma.$transaction(operation, { isolationLevel: 'Serializable' });
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || !['P2034', 'P2002'].includes(error.code)) throw error;
+    }
+  }
+  throw new InvoiceError(409, 'The invoice changed during this request. Please retry.');
+}
 
 export async function getInvoices(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  const { contractId } = req.query;
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { contractId } = req.query;
-
-    const whereClause: any = {
-      contract: {
-        userId: req.user.userId,
-      },
-    };
-
-    if (contractId && typeof contractId === 'string') {
-      whereClause.contractId = contractId;
-    }
-
     const invoices = await prisma.invoice.findMany({
-      where: whereClause,
-      include: {
-        contract: {
-          select: { title: true }
-        },
-        milestone: {
-          select: { title: true }
-        },
-        payments: true
-      },
+      where: { contract: { userId: req.user.userId }, contractId: typeof contractId === 'string' ? contractId : undefined },
+      include: invoiceDetails,
       orderBy: { dueDate: 'asc' },
     });
-
-    return res.json(invoices);
+    return res.json(invoices.map(presentInvoice));
   } catch (error) {
-    console.error('Get invoices error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    return invoiceError(res, error);
   }
 }
 
 export async function createInvoice(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const validatedData = invoiceSchema.parse(req.body);
-
-    // Verify contract belongs to user
-    const contract = await prisma.contract.findUnique({
-      where: { id: validatedData.contractId }
+    const data = invoiceSchema.parse(req.body);
+    const contract = await prisma.contract.findFirst({
+      where: { id: data.contractId, userId: req.user.userId }, select: { id: true },
     });
-
-    if (!contract || contract.userId !== req.user.userId) {
-      return res.status(404).json({ error: 'Contract not found' });
-    }
-
-    // Verify milestone if provided
-    if (validatedData.milestoneId) {
-      const milestone = await prisma.milestone.findUnique({
-        where: { id: validatedData.milestoneId }
-      });
-      if (!milestone || milestone.contractId !== validatedData.contractId) {
-        return res.status(400).json({ error: 'Milestone must belong to the selected contract.' });
-      }
-    }
-
-    const invoice = await prisma.invoice.create({
-      data: {
-        contractId: validatedData.contractId,
-        milestoneId: validatedData.milestoneId || null,
-        amount: validatedData.amount,
-        dueDate: validatedData.dueDate,
-        status: validatedData.status,
-      },
-      include: {
-        contract: { select: { title: true } },
-        milestone: { select: { title: true } }
-      }
-    });
-
-    return res.status(201).json({
-      message: 'Invoice created successfully',
-      invoice,
-    });
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return res.status(400).json({ error: error.errors });
-    }
-    console.error('Create invoice error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    if (!contract) throw new InvoiceError(404, 'Contract not found');
+    await checkMilestone(prisma, data.milestoneId, contract.id);
+    const invoice = await prisma.invoice.create({ data, include: invoiceDetails });
+    return res.status(201).json({ message: 'Invoice created successfully', invoice: presentInvoice(invoice) });
+  } catch (error) {
+    return invoiceError(res, error);
   }
 }
 
 export async function updateInvoice(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  const userId = req.user.userId;
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { id } = req.params;
-    const { amount, dueDate, status, milestoneId } = req.body;
-
-    const invoice = await prisma.invoice.findUnique({
-      where: { id },
-      include: { contract: true }
+    const data = invoiceUpdateSchema.parse(req.body);
+    const invoice = await invoiceTransaction(async db => {
+      const current = await db.invoice.findFirst({
+        where: { id: req.params.id, contract: { userId } }, include: { payments: true },
+      });
+      if (!current) throw new InvoiceError(404, 'Invoice not found');
+      await checkMilestone(db, data.milestoneId, current.contractId);
+      const next = { ...current, ...data, amount: data.amount === undefined ? current.amount : new Prisma.Decimal(data.amount) };
+      const { paid, status } = invoiceBalance(next);
+      if (next.amount.lessThan(paid)) throw new InvoiceError(400, 'The invoice amount cannot be below recorded payments.');
+      return db.invoice.update({ where: { id: current.id }, data: { ...data, status }, include: invoiceDetails });
     });
-
-    if (!invoice || invoice.contract.userId !== req.user.userId) {
-      return res.status(404).json({ error: 'Invoice not found' });
-    }
-
-    const updateData: any = {};
-    if (amount !== undefined) updateData.amount = parseFloat(amount);
-    if (dueDate !== undefined) updateData.dueDate = new Date(dueDate);
-    if (status !== undefined) updateData.status = status;
-    if (milestoneId !== undefined) updateData.milestoneId = milestoneId || null;
-
-    const updatedInvoice = await prisma.invoice.update({
-      where: { id },
-      data: updateData,
-      include: {
-        contract: { select: { title: true } },
-        milestone: { select: { title: true } },
-        payments: true
-      }
-    });
-
-    return res.json({
-      message: 'Invoice updated successfully',
-      invoice: updatedInvoice,
-    });
+    return res.json({ message: 'Invoice updated successfully', invoice: presentInvoice(invoice) });
   } catch (error) {
-    console.error('Update invoice error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    return invoiceError(res, error);
   }
 }
 
 export async function addPayment(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  const userId = req.user.userId;
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const validatedData = paymentSchema.parse(req.body);
-
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: validatedData.invoiceId },
-      include: { contract: true, payments: true }
-    });
-
-    if (!invoice || invoice.contract.userId !== req.user.userId) {
-      return res.status(404).json({ error: 'Invoice not found' });
-    }
-
-    // Create payment
-    const payment = await prisma.payment.create({
-      data: {
-        invoiceId: validatedData.invoiceId,
-        amount: validatedData.amount,
-        method: validatedData.method,
+    const data = paymentSchema.parse(req.body);
+    const amount = new Prisma.Decimal(data.amount);
+    const result = await invoiceTransaction(async db => {
+      const invoice = await db.invoice.findFirst({
+        where: { id: data.invoiceId, contract: { userId } }, include: invoiceDetails,
+      });
+      if (!invoice) throw new InvoiceError(404, 'Invoice not found');
+      if (data.reference) {
+        const existing = await db.payment.findUnique({ where: { reference: data.reference } });
+        if (existing) {
+          if (existing.invoiceId !== invoice.id || !existing.amount.equals(amount) || existing.method !== data.method) {
+            throw new InvoiceError(409, 'Payment reference has already been used.');
+          }
+          return { created: false, payment: existing, invoice };
+        }
       }
+      if (amount.greaterThan(invoiceBalance(invoice).balance)) {
+        throw new InvoiceError(400, 'Payment exceeds the outstanding balance.');
+      }
+      const payment = await db.payment.create({ data });
+      const { status } = invoiceBalance({ ...invoice, payments: [...invoice.payments, payment] });
+      const updated = await db.invoice.update({ where: { id: invoice.id }, data: { status }, include: invoiceDetails });
+      return { created: true, payment, invoice: updated };
     });
-
-    // Compute total paid
-    const totalPaid = invoice.payments.reduce((sum, p) => sum + p.amount, 0) + validatedData.amount;
-
-    // Check if fully paid or update status
-    const newStatus = totalPaid >= invoice.amount ? 'PAID' : 'UNPAID';
-
-    const updatedInvoice = await prisma.invoice.update({
-      where: { id: validatedData.invoiceId },
-      data: { status: newStatus },
-      include: { payments: true }
-    });
-
-    return res.status(201).json({
+    return res.status(result.created ? 201 : 200).json({
       message: 'Payment recorded successfully',
-      payment,
-      invoice: updatedInvoice
+      payment: { ...result.payment, amount: result.payment.amount.toNumber() },
+      invoice: presentInvoice(result.invoice),
     });
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
-      return res.status(400).json({ error: error.errors });
-    }
-    console.error('Add payment error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+  } catch (error) {
+    return invoiceError(res, error);
   }
 }
 
 export async function deleteInvoice(req: Request, res: Response) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  const userId = req.user.userId;
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { id } = req.params;
-
-    const invoice = await prisma.invoice.findUnique({
-      where: { id },
-      include: { contract: true }
+    await invoiceTransaction(async db => {
+      const invoice = await db.invoice.findFirst({
+        where: { id: req.params.id, contract: { userId } }, include: { payments: true },
+      });
+      if (!invoice) throw new InvoiceError(404, 'Invoice not found');
+      if (invoiceBalance(invoice).paid.greaterThan(0)) throw new InvoiceError(409, 'An invoice with payments cannot be deleted.');
+      await db.invoice.delete({ where: { id: invoice.id } });
     });
-
-    if (!invoice || invoice.contract.userId !== req.user.userId) {
-      return res.status(404).json({ error: 'Invoice not found' });
-    }
-
-    await prisma.invoice.delete({
-      where: { id }
-    });
-
     return res.json({ message: 'Invoice deleted successfully' });
   } catch (error) {
-    console.error('Delete invoice error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    return invoiceError(res, error);
   }
 }

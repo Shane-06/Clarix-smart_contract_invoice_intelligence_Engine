@@ -24,10 +24,14 @@ model Contract {
   userId     String
   user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   title      String
+  clientEmail String?
   fileUrl    String?
   rawText    String?     @db.Text
   summary    String?     @db.Text
   riskScore  Int?
+  analysis   Json?
+  riskDetails Json?
+  isDemo     Boolean     @default(false)
   status     String      @default("DRAFT") // DRAFT, ANALYZED, ACTIVE, COMPLETED
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
@@ -54,7 +58,7 @@ model Invoice {
   contract    Contract   @relation(fields: [contractId], references: [id], onDelete: Cascade)
   milestoneId String?
   milestone   Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
-  amount      Float
+  amount      Decimal    @db.Decimal(14, 2)
   dueDate     DateTime
   status      String     @default("UNPAID") // UNPAID, PAID, OVERDUE
   createdAt   DateTime   @default(now())
@@ -66,9 +70,10 @@ model Payment {
   id        String   @id @default(uuid())
   invoiceId String
   invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  amount    Float
+  amount    Decimal  @db.Decimal(14, 2)
   date      DateTime @default(now())
   method    String   // bank_transfer, card, cash, paypal, crypto
+  reference String?  @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

@@ -1,134 +1,86 @@
-'use client';
-
-import React from 'react';
+import { ArrowRight, CalendarDays, Check, FileText, ListChecks, ReceiptText } from 'lucide-react';
 import Link from 'next/link';
-import { 
-  FileText, 
-  Sparkles, 
-  ShieldAlert, 
-  DollarSign, 
-  Mail, 
-  ArrowRight,
-  MessageSquare,
-  Compass
-} from 'lucide-react';
+import Brand from '@/components/Brand';
+
+const steps = [
+  { icon: FileText, title: 'Review the contract', detail: 'Upload a document and extract the payment terms, key obligations, and risks.' },
+  { icon: ListChecks, title: 'Track the work', detail: 'Set milestones, log time, and compare new work against the agreed scope.' },
+  { icon: ReceiptText, title: 'Manage billing', detail: 'Track invoices, record payments, and draft reminders for outstanding balances.' },
+];
 
 export default function LandingPage() {
-  const features = [
-    {
-      title: 'AI Contract Extraction',
-      description: 'Upload your contract PDFs or DOCX. AI automatically extracts client terms, payments, and key details in seconds.',
-      icon: FileText,
-      color: 'from-violet-500 to-purple-500'
-    },
-    {
-      title: 'Auto Milestone Tracking',
-      description: 'Milestones are automatically identified and imported into your checklist, giving you exact deadlines.',
-      icon: Compass,
-      color: 'from-indigo-500 to-blue-500'
-    },
-    {
-      title: 'Risk Clause Intelligence',
-      description: 'Calculates a visual Risk Score (1-10) and flags missing protections (like Indemnity or Termination Notice).',
-      icon: ShieldAlert,
-      color: 'from-pink-500 to-rose-500'
-    },
-    {
-      title: 'Smart Invoice Reminders',
-      description: 'Convert milestones to invoices instantly, and dispatch personalized, professional, AI-written reminders via Resend.',
-      icon: Mail,
-      color: 'from-emerald-500 to-teal-500'
-    },
-    {
-      title: 'Contract Q&A Chat',
-      description: 'Ask questions about your contract directly in the context-aware sidebar chatbot (e.g. \"What is the cancellation term?\").',
-      icon: MessageSquare,
-      color: 'from-amber-500 to-orange-500'
-    },
-    {
-      title: 'Scope Creep Detection',
-      description: 'Log your completed hours. AI compares daily work descriptions against the deliverables to detect scope creep.',
-      icon: Sparkles,
-      color: 'from-cyan-500 to-sky-500'
-    }
-  ];
-
   return (
-    <div className="min-h-screen bg-gradient-mesh flex flex-col">
-      {/* Header */}
-      <header className="h-20 flex items-center justify-between px-6 md:px-12 border-b border-zinc-900/60 bg-zinc-950/20 backdrop-blur-md sticky top-0 z-50">
-        <div className="flex items-center gap-2">
-          <div className="h-9 w-9 rounded-lg bg-gradient-to-tr from-violet-600 to-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-violet-500/20">
-            I
-          </div>
-          <span className="font-bold tracking-tight text-lg text-white">InvoiceIntel</span>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          <Link href="/login" className="text-sm font-medium text-zinc-400 hover:text-zinc-100 transition-colors">
-            Sign In
-          </Link>
-          <Link 
-            href="/register" 
-            className="glow-btn bg-violet-600 hover:bg-violet-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all shadow-md shadow-violet-500/10"
-          >
-            Get Started
-          </Link>
+    <div className="min-h-screen bg-surface">
+      <header className="border-b border-line">
+        <div className="public-container flex min-h-[72px] flex-wrap items-center justify-between gap-3 py-3">
+          <Brand />
+          <nav className="flex items-center gap-4 sm:gap-7" aria-label="Main navigation">
+            <a href="#workflow" className="hidden text-sm font-medium text-copy hover:text-brand sm:block">Workflow</a>
+            <Link href="/login" className="text-sm font-semibold text-ink hover:text-brand">Sign in</Link>
+            <span className="hidden sm:inline"><Link href="/register" className="action action-small">Get started <ArrowRight size={15} aria-hidden="true" /></Link></span>
+          </nav>
         </div>
       </header>
 
-      {/* Hero Section */}
-      <main className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20 max-w-5xl mx-auto">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-xs text-violet-400 font-semibold mb-6 animate-pulse">
-          <Sparkles className="h-3 w-3" /> Introducing AI Contract Intelligence
-        </div>
-        
-        <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-b from-white to-zinc-400 mb-6 max-w-3xl leading-[1.1]">
-          Manage Freelance Contracts, Payments, and Milestones with AI
-        </h1>
-        
-        <p className="text-zinc-400 text-base sm:text-lg max-w-2xl mb-10 leading-relaxed">
-          Upload PDF or Word contracts. Auto-extract deliverables, construct client milestones, detect contract risk clauses, and trigger polite payment reminder emails.
-        </p>
-
-        <div className="flex flex-col sm:flex-row gap-4 mb-20 w-full sm:w-auto">
-          <Link 
-            href="/register" 
-            className="glow-btn bg-violet-600 hover:bg-violet-500 text-white px-8 py-3.5 rounded-xl text-base font-semibold transition-all flex items-center justify-center gap-2 shadow-lg shadow-violet-600/20 active:scale-95"
-          >
-            Start Analyzing Contracts <ArrowRight className="h-5 w-5" />
-          </Link>
-          <Link 
-            href="/login" 
-            className="bg-zinc-900 hover:bg-zinc-800 text-zinc-200 px-8 py-3.5 rounded-xl text-base font-semibold transition-all border border-zinc-800 flex items-center justify-center hover:border-zinc-700 active:scale-95"
-          >
-            Access Dashboard
-          </Link>
-        </div>
-
-        {/* Feature Grid */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full text-left pt-12 border-t border-zinc-900/60">
-          {features.map((feature, idx) => {
-            const Icon = feature.icon;
-            return (
-              <div 
-                key={idx}
-                className="glass-card rounded-2xl p-6 border border-zinc-900 relative overflow-hidden"
-              >
-                <div className="h-10 w-10 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-4">
-                  <Icon className="h-5 w-5 text-violet-400" />
-                </div>
-                <h3 className="text-lg font-bold text-zinc-200 mb-2">{feature.title}</h3>
-                <p className="text-sm text-zinc-500 leading-relaxed">{feature.description}</p>
+      <main>
+        <section className="border-b border-line bg-canvas">
+          <div className="public-container grid items-center gap-12 py-14 sm:py-18 lg:grid-cols-[1fr_1fr] lg:gap-17 lg:py-20">
+            <div>
+              <p className="mb-4 text-sm font-semibold text-brand">For freelancers and service teams</p>
+              <h1 className="max-w-[570px] text-[clamp(2.6rem,5.2vw,4.7rem)] font-bold leading-[1.02] tracking-[-0.062em] text-ink">
+                Contracts, work, and billing in one place.
+              </h1>
+              <p className="mt-5 max-w-[440px] text-base leading-7 text-copy sm:text-lg">
+                Turn signed agreements into clear milestones and keep track of what clients owe.
+              </p>
+              <div className="mt-7 flex flex-wrap gap-3">
+                <Link href="/register" className="action">Create an account <ArrowRight size={17} aria-hidden="true" /></Link>
+                <a href="#workflow" className="action action-secondary">See how it works</a>
               </div>
-            );
-          })}
+            </div>
+
+            <div className="product-preview rounded-2xl p-4 text-white sm:p-7" aria-label="Example contract brief">
+              <div className="mb-5 flex items-center gap-2.5">
+                <FileText size={18} className="text-[#b9cbf8]" aria-hidden="true" />
+                <span className="text-sm font-semibold">Example contract</span>
+              </div>
+              <div className="rounded-xl bg-white p-5 text-ink sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-4">
+                  <div>
+                    <p className="text-xs leading-5 text-copy">Service agreement</p>
+                    <p className="mt-1 text-lg font-bold tracking-tight sm:text-xl">Studio website redesign</p>
+                  </div>
+                  <span className="rounded-md bg-brand-light px-2 py-1 text-xs font-semibold text-brand-dark">Reviewed</span>
+                </div>
+                <dl className="grid grid-cols-2 gap-3 border-b border-line py-4">
+                  <div><dt className="text-xs text-copy">Contract value</dt><dd className="mt-1 text-lg font-bold">$4,800.00</dd></div>
+                  <div><dt className="text-xs text-copy">Payment terms</dt><dd className="mt-1 text-lg font-bold">Net 15</dd></div>
+                </dl>
+                <div className="mt-4 grid gap-3 text-sm">
+                  <p className="flex items-center gap-2.5"><Check size={16} className="text-emerald-700" aria-hidden="true" /> Project kickoff <span className="ml-auto text-xs text-copy">Complete</span></p>
+                  <p className="flex items-center gap-2.5"><CalendarDays size={16} className="text-brand" aria-hidden="true" /> Design approval <span className="ml-auto text-xs text-copy">Upcoming</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="workflow" className="public-container py-12 sm:py-14">
+          <h2 className="text-2xl font-bold tracking-tight text-ink">From agreement to payment</h2>
+          <div className="mt-6 grid gap-4 md:grid-cols-3">
+            {steps.map(({ icon: Icon, title, detail }) => (
+              <article key={title} className="surface-card p-5 sm:p-6">
+                <Icon size={21} className="mb-3 text-brand" aria-hidden="true" />
+                <h3 className="text-base font-bold text-ink">{title}</h3>
+                <p className="mt-1.5 text-sm leading-6 text-copy">{detail}</p>
+              </article>
+            ))}
+          </div>
         </section>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-zinc-900 py-8 px-6 text-center text-xs text-zinc-600">
-        &copy; {new Date().getFullYear()} InvoiceIntel Engine. All rights reserved. Created for Next-Gen Freelance Management.
+      <footer className="border-t border-line">
+        <div className="public-container py-6"><Brand /></div>
       </footer>
     </div>
   );

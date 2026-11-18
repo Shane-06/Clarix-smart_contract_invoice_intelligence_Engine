@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useCallback, useContext, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 
 export interface User {
@@ -10,106 +10,104 @@ export interface User {
   role: string;
 }
 
-interface AuthContextType {
+type Session = { user: User; token: string };
+type AuthContextType = {
   user: User | null;
-  token: string | null;
   loading: boolean;
   login: (token: string, user: User) => void;
   logout: () => void;
-  apiFetch: (endpoint: string, options?: RequestInit) => Promise<any>;
-}
+  apiFetch: <T = unknown>(endpoint: string, options?: RequestInit) => Promise<T>;
+  apiResponse: (endpoint: string, options?: RequestInit) => Promise<Response>;
+};
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const apiBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api').replace(/\/+$/, '');
+const sessionEvent = 'workspace-session';
 
-export const API_BASE_URL = 'http://localhost:5000/api';
+function subscribe(listener: () => void) {
+  window.addEventListener('storage', listener);
+  window.addEventListener(sessionEvent, listener);
+  return () => {
+    window.removeEventListener('storage', listener);
+    window.removeEventListener(sessionEvent, listener);
+  };
+}
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+function snapshot() {
+  const session = localStorage.getItem('workspace-session');
+  if (session) return session;
+  const token = localStorage.getItem('token');
+  const user = localStorage.getItem('user');
+  return token && user ? '{"token":' + JSON.stringify(token) + ',"user":' + user + '}' : null;
+}
+
+function readSession(value: string | null | undefined): Session | null {
+  try {
+    if (!value) return null;
+    const session = JSON.parse(value) as Session;
+    return typeof session.token === 'string' && typeof session.user?.id === 'string' &&
+      typeof session.user.name === 'string' ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(session: Session | null) {
+  if (session) localStorage.setItem('workspace-session', JSON.stringify(session));
+  else localStorage.removeItem('workspace-session');
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  window.dispatchEvent(new Event(sessionEvent));
+}
+
+export function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function serverSnapshot() {
+  return undefined;
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const stored = useSyncExternalStore(subscribe, snapshot, serverSnapshot);
+  const session = useMemo(() => readSession(stored), [stored]);
   const router = useRouter();
 
-  useEffect(() => {
-    // Read user & token from localstorage on mount
-    const savedToken = localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
+  const login = useCallback((token: string, user: User) => {
+    saveSession({ token, user });
+    router.replace('/dashboard');
+  }, [router]);
 
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch (e) {
-        console.error('Failed to parse saved user credentials', e);
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-      }
-    }
-    setLoading(false);
-  }, []);
+  const logout = useCallback(() => {
+    saveSession(null);
+    router.replace('/login');
+  }, [router]);
 
-  const login = (newToken: string, newUser: User) => {
-    setToken(newToken);
-    setUser(newUser);
-    localStorage.setItem('token', newToken);
-    localStorage.setItem('user', JSON.stringify(newUser));
-    router.push('/dashboard');
-  };
-
-  const logout = () => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    router.push('/login');
-  };
-
-  // Helper fetch wrapper that automatically appends JWT and handles API URLs
-  const apiFetch = async (endpoint: string, options: RequestInit = {}): Promise<any> => {
-    const activeToken = token || localStorage.getItem('token');
-    const headers = new Headers(options.headers || {});
-    
-    // Auto-detect if payload is FormData, do not set application/json
-    if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
+  const apiResponse = useCallback(async (endpoint: string, options: RequestInit = {}) => {
+    const token = readSession(snapshot())?.token;
+    const headers = new Headers(options.headers);
+    if (typeof options.body === 'string' && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
     }
+    if (token) headers.set('Authorization', 'Bearer ' + token);
+    const response = await fetch(apiBase + endpoint, { ...options, headers });
+    if (response.ok) return response;
 
-    if (activeToken) {
-      headers.set('Authorization', `Bearer ${activeToken}`);
-    }
+    if (response.status === 401 && token && readSession(snapshot())?.token === token && !endpoint.startsWith('/auth/')) logout();
+    const { error } = await response.json().catch(() => ({}));
+    const message = Array.isArray(error)
+      ? error.map(issue => issue.message).filter(Boolean).join(' ')
+      : error;
+    throw new Error(typeof message === 'string' && message ? message : 'Request failed (' + response.status + ').');
+  }, [logout]);
 
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...options,
-      headers,
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const errorMessage = errorData.error || `HTTP error! status: ${response.status}`;
-      
-      // Auto-logout if token is expired/invalid
-      if (response.status === 403 || response.status === 401) {
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
-          setUser(null);
-          setToken(null);
-          router.push('/login');
-        }
-      }
-      
-      throw new Error(errorMessage);
-    }
-
-    // Try to parse json, return text if not json
-    const contentType = response.headers.get('content-type');
-    if (contentType && contentType.includes('application/json')) {
-      return response.json();
-    }
-    return response.text();
-  };
+  const apiFetch = useCallback(async <T,>(endpoint: string, options?: RequestInit): Promise<T> => {
+    const response = await apiResponse(endpoint, options);
+    return response.json();
+  }, [apiResponse]);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout, apiFetch }}>
+    <AuthContext.Provider value={{ user: session?.user ?? null, loading: stored === undefined, login, logout, apiFetch, apiResponse }}>
       {children}
     </AuthContext.Provider>
   );
@@ -117,8 +115,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 }

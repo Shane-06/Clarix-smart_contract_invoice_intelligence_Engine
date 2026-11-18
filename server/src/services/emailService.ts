@@ -1,41 +1,23 @@
 import { Resend } from 'resend';
-import dotenv from 'dotenv';
+import { demoMode } from '../utils/config';
 
-dotenv.config();
+const key = process.env.RESEND_API_KEY;
+const resend = key && !key.startsWith('your-') ? new Resend(key) : null;
 
-const resend = process.env.RESEND_API_KEY && !process.env.RESEND_API_KEY.includes('your-')
-  ? new Resend(process.env.RESEND_API_KEY)
-  : null;
-
-export interface SendEmailPayload {
-  to: string;
-  subject: string;
-  html: string;
+export class EmailUnavailableError extends Error {
+  constructor() {
+    super('Email delivery is unavailable. Check the Resend configuration or try again later.');
+  }
 }
 
-export async function sendEmail({ to, subject, html }: SendEmailPayload) {
-  const from = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
-
-  if (!resend) {
-    console.log('--- MOCK EMAIL DISPATCH ---');
-    console.log(`From: ${from}`);
-    console.log(`To: ${to}`);
-    console.log(`Subject: ${subject}`);
-    console.log(`Body (HTML):\n${html}`);
-    console.log('---------------------------');
-    return { id: `mock-email-${Date.now()}`, message: 'Mock email logged successfully' };
-  }
-
+export async function sendEmail({ to, subject, text }: { to: string; subject: string; text: string }) {
+  if (demoMode) return { sent: false };
+  if (!resend || !process.env.RESEND_FROM_EMAIL) throw new EmailUnavailableError();
   try {
-    const data = await resend.emails.send({
-      from,
-      to,
-      subject,
-      html,
-    });
-    return data;
-  } catch (error) {
-    console.error('Failed to send email via Resend:', error);
-    throw error;
+    const result = await resend.emails.send({ from: process.env.RESEND_FROM_EMAIL, to, subject, text });
+    if (result.error || !result.data?.id) throw new EmailUnavailableError();
+    return { sent: true };
+  } catch {
+    throw new EmailUnavailableError();
   }
 }

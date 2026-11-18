@@ -2,7 +2,8 @@ import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
 
 export async function parsePdf(buffer: Buffer): Promise<string> {
-  const data = await pdf(buffer);
+  // The bundled PDF.js reader expects a standalone Uint8Array.
+  const data = await pdf(Uint8Array.from(buffer) as unknown as Buffer);
   return data.text;
 }
 
@@ -15,8 +16,7 @@ export async function parseFile(buffer: Buffer, mimeType: string): Promise<strin
   if (mimeType === 'application/pdf') {
     return parsePdf(buffer);
   } else if (
-    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    mimeType === 'application/msword'
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   ) {
     return parseDocx(buffer);
   } else {

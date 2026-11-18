@@ -1,20 +1,19 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { JwtPayload } from '../types';
+import { getJwtSecret } from '../utils/config';
 
 export function authenticateToken(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = authHeader?.match(/^Bearer (\S+)$/i)?.[1];
 
   if (!token) {
     return res.status(401).json({ error: 'Access token missing from request headers' });
   }
 
-  const secret = process.env.JWT_SECRET || 'super-secret-key-change-in-production';
-
-  jwt.verify(token, secret, (err, decoded) => {
-    if (err || !decoded) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
+  jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] }, (err, decoded) => {
+    if (err || !decoded || typeof decoded === 'string' || typeof decoded.userId !== 'string') {
+      return res.status(401).json({ error: 'Invalid or expired token' });
     }
     
     req.user = decoded as JwtPayload;

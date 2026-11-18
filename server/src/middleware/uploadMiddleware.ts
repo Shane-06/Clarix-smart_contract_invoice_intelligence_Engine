@@ -7,7 +7,6 @@ const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilt
   const allowedMimeTypes = [
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx
-    'application/msword', // doc
     'text/plain', // fallback plain text for dev testing
   ];
 
