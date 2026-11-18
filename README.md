@@ -462,7 +462,7 @@ Make sure you have:
 
 For live integrations, you will also need accounts/API credentials for:
 
-* Gemini
+* Gemini API
 * Cloudinary
 * Resend
 
